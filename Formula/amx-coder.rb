@@ -6,7 +6,7 @@ class AmxCoder < Formula
   homepage "https://github.com/aimatrix/amx-coder"
   url "https://github.com/aimatrix/amx-coder/archive/refs/tags/v1.0.0.tar.gz"
   version "1.0.0"
-  sha256 "0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5"
+  sha256 "f2d8fae82fd95a59b8c8d396ab5a8016b864399b7ea9a18dab37ff24ae57ae69"
   license "MIT"
 
   depends_on "gradle" => :build
