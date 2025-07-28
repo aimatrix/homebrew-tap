@@ -16,6 +16,9 @@ class AmxCoder < Formula
     # Build from source using Gradle
     ENV["JAVA_HOME"] = Formula["openjdk@17"].opt_prefix
     
+    # Clean any existing build artifacts
+    system "./gradlew", "clean", "--no-daemon"
+    
     # Build for current platform
     if Hardware::CPU.arm?
       system "./gradlew", "linkReleaseExecutableMacosArm64", "--no-daemon"
