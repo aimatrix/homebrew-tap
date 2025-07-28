@@ -6,7 +6,7 @@ class AmxCoder < Formula
   homepage "https://public.aimatrix.com/dist/amx-coder/public/"
   url "https://public.aimatrix.com/dist/amx-coder/public/amx-coder-1.0.2.tar.gz"
   version "1.0.2"
-  sha256 "78c8d7fa440e504b53c708aef239c05900dc823a0bcab61e663d688c857f1520"
+  sha256 "8f3a9c4dc03a72ccbc58f4de3ea5af707b7f12534043f3301acdd46f7d463f3d"
   license "MIT"
 
   depends_on "openjdk@17"
