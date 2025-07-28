@@ -3,36 +3,26 @@
 # Formula for AMX Coder - a multi-agent coding workspace
 class AmxCoder < Formula
   desc "Stateless, multi-agent coding workspace for automating coding tasks"
-  homepage "https://github.com/aimatrix/amx-coder"
-  url "https://github.com/aimatrix/amx-coder/archive/refs/tags/v1.0.0.tar.gz"
-  version "1.0.0"
-  sha256 "f2d8fae82fd95a59b8c8d396ab5a8016b864399b7ea9a18dab37ff24ae57ae69"
+  homepage "https://public.aimatrix.com/dist/amx-coder/public/"
+  url "https://public.aimatrix.com/dist/amx-coder/public/amx-coder-1.0.2.tar.gz"
+  version "1.0.2"
+  sha256 "78c8d7fa440e504b53c708aef239c05900dc823a0bcab61e663d688c857f1520"
   license "MIT"
 
-  depends_on "gradle" => :build
-  depends_on "openjdk@17" => :build
+  depends_on "openjdk@17"
+  depends_on "gradle"
 
   def install
-    # Set JAVA_HOME for the build
+    # Build from source using Gradle
     ENV["JAVA_HOME"] = Formula["openjdk@17"].opt_prefix
-
-    # Determine the target platform for macOS
-    target = if Hardware::CPU.arm?
-      "macosArm64"
+    
+    # Build for current platform
+    if Hardware::CPU.arm?
+      system "./gradlew", "linkReleaseExecutableMacosArm64", "--no-daemon"
+      bin.install "build/bin/macosArm64/releaseExecutable/amx-coder.kexe" => "amx-coder"
     else
-      "macos"
-    end
-
-    # Build the native executable for macOS
-    system "gradle", "#{target}Binaries", "--no-daemon"
-
-    # Find and install the built executable
-    executable_path = "build/bin/#{target}/releaseExecutable/amx-coder.kexe"
-
-    if File.exist?(executable_path)
-      bin.install executable_path => "amx-coder"
-    else
-      odie "Built executable not found at #{executable_path}"
+      system "./gradlew", "linkReleaseExecutableMacos", "--no-daemon"
+      bin.install "build/bin/macos/releaseExecutable/amx-coder.kexe" => "amx-coder"
     end
   end
 
