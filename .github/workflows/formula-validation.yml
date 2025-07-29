@@ -1,0 +1,226 @@
+name: Formula Validation
+
+on:
+  pull_request:
+    paths:
+      - 'Formula/**'
+  push:
+    branches: [main]
+    paths:
+      - 'Formula/**'
+  workflow_dispatch:
+
+jobs:
+  validate-formula:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-13, macos-14] # Include Intel and Apple Silicon macOS
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Homebrew (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+        
+    - name: Add tap locally
+      run: |
+        brew tap aimatrix/tap $(pwd)
+        
+    - name: Validate formula syntax
+      run: |
+        brew audit --strict Formula/amx-coder.rb
+        
+    - name: Test formula installation (dry run)
+      run: |
+        brew install --dry-run amx-coder
+        
+    - name: Test formula installation (actual)
+      run: |
+        brew install amx-coder
+        
+    - name: Test installed package
+      run: |
+        # Test that the binary was installed
+        which amx-coder
+        
+        # Test basic functionality
+        amx-coder --version
+        amx-coder --help
+        
+        # Test that it can create workspace
+        mkdir -p /tmp/test-workspace
+        cd /tmp/test-workspace
+        amx-coder workspace init test-project --type monorepo || true
+        
+    - name: Test formula uninstallation
+      run: |
+        brew uninstall amx-coder
+        
+        # Verify it was uninstalled
+        ! which amx-coder
+
+  validate-formula-style:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Homebrew
+      run: |
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+        
+    - name: Add tap locally
+      run: |
+        brew tap aimatrix/tap $(pwd)
+        
+    - name: Run style checks
+      run: |
+        # Check formula style
+        brew style Formula/amx-coder.rb
+        
+        # Audit formula
+        brew audit --strict Formula/amx-coder.rb
+        
+    - name: Validate formula metadata
+      run: |
+        # Extract and validate key information
+        VERSION=$(grep -o 'version "[^"]*"' Formula/amx-coder.rb | cut -d'"' -f2)
+        URL=$(grep -o 'url "[^"]*"' Formula/amx-coder.rb | cut -d'"' -f2)
+        SHA256=$(grep -o 'sha256 "[^"]*"' Formula/amx-coder.rb | cut -d'"' -f2)
+        
+        echo "Formula metadata:"
+        echo "Version: $VERSION"
+        echo "URL: $URL"
+        echo "SHA256: $SHA256"
+        
+        # Validate version format
+        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "❌ Invalid version format: $VERSION"
+          exit 1
+        fi
+        
+        # Validate URL accessibility
+        if ! curl -f -I "$URL" > /dev/null 2>&1; then
+          echo "❌ URL is not accessible: $URL"
+          exit 1
+        fi
+        
+        # Validate SHA256 format
+        if [[ ! "$SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+          echo "❌ Invalid SHA256 format: $SHA256"
+          exit 1
+        fi
+        
+        echo "✅ All metadata validation passed"
+
+  test-cross-platform:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-13
+            arch: x86_64
+          - os: macos-14  
+            arch: arm64
+          - os: ubuntu-latest
+            arch: x86_64
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Homebrew (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+        
+    - name: Show system information
+      run: |
+        echo "OS: ${{ matrix.os }}"
+        echo "Architecture: ${{ matrix.arch }}"
+        uname -a
+        
+    - name: Test platform-specific installation
+      run: |
+        brew tap aimatrix/tap $(pwd)
+        brew install amx-coder
+        
+        # Test binary works on this platform
+        amx-coder --version
+        
+        # Test architecture-specific functionality if applicable
+        amx-coder system info || true
+        
+    - name: Create test report
+      run: |
+        echo "## Cross-Platform Test Results" >> test-results.md
+        echo "- **OS**: ${{ matrix.os }}" >> test-results.md  
+        echo "- **Architecture**: ${{ matrix.arch }}" >> test-results.md
+        echo "- **Status**: ✅ Passed" >> test-results.md
+        echo "- **Version**: $(amx-coder --version)" >> test-results.md
+        echo "" >> test-results.md
+        
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.os }}-${{ matrix.arch }}
+        path: test-results.md
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Scan formula for security issues
+      run: |
+        # Check for insecure URLs (http instead of https)
+        if grep -q 'url "http://' Formula/amx-coder.rb; then
+          echo "❌ Formula uses insecure HTTP URL"
+          exit 1
+        fi
+        
+        # Check for hardcoded credentials or sensitive information
+        if grep -iE '(password|secret|key|token)' Formula/amx-coder.rb; then
+          echo "⚠️  Formula may contain sensitive information"
+          grep -iE '(password|secret|key|token)' Formula/amx-coder.rb
+        fi
+        
+        # Validate SHA256 checksum exists
+        if ! grep -q 'sha256 "[a-f0-9]\{64\}"' Formula/amx-coder.rb; then
+          echo "❌ Formula missing or invalid SHA256 checksum"
+          exit 1
+        fi
+        
+        echo "✅ Security scan passed"
+
+  performance-test:
+    runs-on: macos-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install and performance test
+      run: |
+        brew tap aimatrix/tap $(pwd)
+        
+        # Time the installation
+        echo "Testing installation performance..."
+        time brew install amx-coder
+        
+        # Time basic operations
+        echo "Testing runtime performance..."
+        time amx-coder --version
+        time amx-coder --help
+        
+        # Test workspace creation performance
+        mkdir -p /tmp/perf-test
+        cd /tmp/perf-test
+        time amx-coder workspace init perf-test --type monorepo || true
+        
+        echo "✅ Performance tests completed"

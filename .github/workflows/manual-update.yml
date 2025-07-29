@@ -1,0 +1,318 @@
+name: Manual Formula Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'New version number (e.g., 1.0.3)'
+        required: true
+        type: string
+      download_url:
+        description: 'Download URL (optional, will be auto-generated if empty)'
+        required: false
+        type: string
+      sha256:
+        description: 'SHA256 checksum (optional, will be auto-calculated if empty)'
+        required: false
+        type: string
+      create_pr:
+        description: 'Create pull request instead of direct commit'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      download_url: ${{ steps.validate.outputs.download_url }}
+      should_calculate_sha256: ${{ steps.validate.outputs.should_calculate_sha256 }}
+    steps:
+    - name: Validate inputs
+      id: validate
+      run: |
+        VERSION="${{ github.event.inputs.version }}"
+        DOWNLOAD_URL="${{ github.event.inputs.download_url }}"
+        SHA256="${{ github.event.inputs.sha256 }}"
+        
+        # Validate version format
+        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "❌ Invalid version format: $VERSION (expected: x.y.z)"
+          exit 1
+        fi
+        
+        # Auto-generate download URL if not provided
+        if [[ -z "$DOWNLOAD_URL" ]]; then
+          DOWNLOAD_URL="https://public.aimatrix.com/dist/amx-coder/public/amx-coder-${VERSION}.tar.gz"
+          echo "Auto-generated download URL: $DOWNLOAD_URL"
+        fi
+        
+        # Validate URL accessibility
+        if ! curl -f -I "$DOWNLOAD_URL" > /dev/null 2>&1; then
+          echo "❌ Download URL is not accessible: $DOWNLOAD_URL"
+          exit 1
+        fi
+        
+        # Determine if we need to calculate SHA256
+        SHOULD_CALCULATE_SHA256="true"
+        if [[ -n "$SHA256" ]]; then
+          if [[ "$SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+            SHOULD_CALCULATE_SHA256="false"
+            echo "Using provided SHA256: $SHA256"
+          else
+            echo "❌ Invalid SHA256 format: $SHA256"
+            exit 1
+          fi
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+        echo "should_calculate_sha256=$SHOULD_CALCULATE_SHA256" >> $GITHUB_OUTPUT
+        
+        echo "✅ Input validation passed"
+        echo "Version: $VERSION"
+        echo "Download URL: $DOWNLOAD_URL"
+        echo "Will calculate SHA256: $SHOULD_CALCULATE_SHA256"
+
+  calculate-sha256:
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.should_calculate_sha256 == 'true'
+    outputs:
+      sha256: ${{ steps.calc-sha256.outputs.sha256 }}
+    steps:
+    - name: Download and calculate SHA256
+      id: calc-sha256
+      run: |
+        DOWNLOAD_URL="${{ needs.validate-inputs.outputs.download_url }}"
+        echo "Downloading from: $DOWNLOAD_URL"
+        
+        # Download the file
+        curl -L -o amx-coder.tar.gz "$DOWNLOAD_URL"
+        
+        # Calculate SHA256
+        SHA256=$(sha256sum amx-coder.tar.gz | cut -d' ' -f1)
+        echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+        echo "Calculated SHA256: $SHA256"
+
+  update-formula:
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, calculate-sha256]
+    if: always() && needs.validate-inputs.result == 'success'
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Configure Git
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        
+    - name: Determine SHA256
+      id: determine-sha256
+      run: |
+        if [[ "${{ needs.validate-inputs.outputs.should_calculate_sha256 }}" == "true" ]]; then
+          SHA256="${{ needs.calculate-sha256.outputs.sha256 }}"
+        else
+          SHA256="${{ github.event.inputs.sha256 }}"
+        fi
+        echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+        echo "Using SHA256: $SHA256"
+        
+    - name: Create feature branch
+      if: github.event.inputs.create_pr == 'true'
+      run: |
+        BRANCH_NAME="update-formula-v${{ needs.validate-inputs.outputs.version }}"
+        git checkout -b "$BRANCH_NAME"
+        echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+        
+    - name: Update formula
+      run: |
+        VERSION="${{ needs.validate-inputs.outputs.version }}"
+        DOWNLOAD_URL="${{ needs.validate-inputs.outputs.download_url }}"
+        SHA256="${{ steps.determine-sha256.outputs.sha256 }}"
+        
+        echo "Updating formula to version $VERSION"
+        echo "Download URL: $DOWNLOAD_URL"
+        echo "SHA256: $SHA256"
+        
+        # Backup original formula
+        cp Formula/amx-coder.rb Formula/amx-coder.rb.backup
+        
+        # Update the formula file
+        sed -i "s/version \"[^\"]*\"/version \"$VERSION\"/" Formula/amx-coder.rb
+        sed -i "s|url \"[^\"]*\"|url \"$DOWNLOAD_URL\"|" Formula/amx-coder.rb
+        sed -i "s/sha256 \"[^\"]*\"/sha256 \"$SHA256\"/" Formula/amx-coder.rb
+        
+        echo "=== Formula Changes ==="
+        echo "--- Before ---"
+        head -20 Formula/amx-coder.rb.backup
+        echo "--- After ---"
+        head -20 Formula/amx-coder.rb
+        echo "================="
+        
+    - name: Test updated formula
+      run: |
+        # Install Homebrew for testing
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+        
+        # Add our tap locally
+        brew tap aimatrix/tap $(pwd)
+        
+        # Install dependencies
+        brew install openjdk@17 gradle
+        
+        # Test the formula (dry run first)
+        echo "Testing formula (dry run)..."
+        brew install --dry-run amx-coder
+        
+        # Test actual installation
+        echo "Testing actual installation..."
+        brew install amx-coder
+        
+        # Test functionality
+        echo "Testing functionality..."
+        amx-coder --version
+        amx-coder --help
+        
+        echo "✅ Formula test passed"
+        
+    - name: Commit changes (direct to main)
+      if: github.event.inputs.create_pr != 'true'
+      run: |
+        VERSION="${{ needs.validate-inputs.outputs.version }}"
+        SHA256="${{ steps.determine-sha256.outputs.sha256 }}"
+        
+        if git diff --quiet; then
+          echo "No changes to commit"
+          exit 0
+        fi
+        
+        git add Formula/amx-coder.rb
+        git commit -m "📦 Manual update: amx-coder to v$VERSION
+
+        - Updated version to $VERSION
+        - Updated download URL: ${{ needs.validate-inputs.outputs.download_url }}
+        - Updated SHA256 checksum: $SHA256
+        
+        This update was manually triggered via GitHub Actions workflow.
+        
+        Requested by: @${{ github.actor }}"
+        
+        git push origin main
+        
+    - name: Commit and create PR
+      if: github.event.inputs.create_pr == 'true'
+      run: |
+        VERSION="${{ needs.validate-inputs.outputs.version }}"
+        SHA256="${{ steps.determine-sha256.outputs.sha256 }}"
+        
+        if git diff --quiet; then
+          echo "No changes to commit"
+          exit 0
+        fi
+        
+        git add Formula/amx-coder.rb
+        git commit -m "📦 Update amx-coder to v$VERSION
+
+        - Updated version to $VERSION
+        - Updated download URL: ${{ needs.validate-inputs.outputs.download_url }}
+        - Updated SHA256 checksum: $SHA256"
+        
+        git push origin "$BRANCH_NAME"
+        
+        # Create pull request
+        gh pr create \
+          --title "📦 Update amx-coder formula to v$VERSION" \
+          --body "## Formula Update
+
+        This PR updates the amx-coder formula to version **$VERSION**.
+
+        ### Changes
+        - ✅ Version updated to \`$VERSION\`
+        - ✅ Download URL updated
+        - ✅ SHA256 checksum updated
+        - ✅ Formula tested successfully
+
+        ### Testing Results
+        - [x] Formula syntax validation passed
+        - [x] Dry run installation passed
+        - [x] Actual installation passed
+        - [x] Basic functionality tests passed
+
+        ### Details
+        - **Download URL**: ${{ needs.validate-inputs.outputs.download_url }}
+        - **SHA256**: \`$SHA256\`
+        - **Requested by**: @${{ github.actor }}
+
+        This update was generated by the manual formula update workflow." \
+          --reviewer "${{ github.actor }}"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Create success summary
+      if: success()
+      run: |
+        VERSION="${{ needs.validate-inputs.outputs.version }}"
+        SHA256="${{ steps.determine-sha256.outputs.sha256 }}"
+        
+        echo "## ✅ Formula Update Successful" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "The amx-coder formula has been successfully updated!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Update Details" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "- **Download URL**: ${{ needs.validate-inputs.outputs.download_url }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **SHA256**: \`$SHA256\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Action Type**: ${{ github.event.inputs.create_pr == 'true' && 'Pull Request Created' || 'Direct Commit' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+        if [[ "${{ github.event.inputs.create_pr }}" == "true" ]]; then
+          echo "1. Review and merge the created pull request" >> $GITHUB_STEP_SUMMARY
+          echo "2. Test the installation: \`brew tap aimatrix/tap && brew install amx-coder\`" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "1. Test the installation: \`brew tap aimatrix/tap && brew install amx-coder\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify functionality: \`amx-coder --version\`" >> $GITHUB_STEP_SUMMARY
+        fi
+
+  test-updated-formula:
+    runs-on: ${{ matrix.os }}
+    needs: [validate-inputs, update-formula]
+    if: needs.update-formula.result == 'success' && github.event.inputs.create_pr != 'true'
+    strategy:
+      matrix:
+        os: [macos-13, macos-14]
+    steps:
+    - name: Wait for formula update
+      run: sleep 60
+      
+    - name: Test installation on ${{ matrix.os }}
+      run: |
+        # Add the tap (this will get the updated formula)
+        brew tap aimatrix/tap
+        
+        # Update tap to get latest changes
+        brew tap --repair
+        
+        # Install the package
+        brew install amx-coder
+        
+        # Test functionality
+        amx-coder --version
+        amx-coder --help
+        
+        # Verify version
+        INSTALLED_VERSION=$(amx-coder --version | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
+        EXPECTED_VERSION="${{ needs.validate-inputs.outputs.version }}"
+        
+        if [[ "$INSTALLED_VERSION" != "$EXPECTED_VERSION" ]]; then
+          echo "❌ Version mismatch: expected $EXPECTED_VERSION, got $INSTALLED_VERSION"
+          exit 1
+        fi
+        
+        echo "✅ Installation test passed on ${{ matrix.os }}"
+        echo "Installed version: $INSTALLED_VERSION"
