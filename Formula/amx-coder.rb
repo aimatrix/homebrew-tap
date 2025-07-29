@@ -5,28 +5,14 @@ class AmxCoder < Formula
   desc "Stateless, multi-agent coding workspace for automating coding tasks"
   homepage "https://github.com/aimatrix/amx-coder"
   url "https://public.aimatrix.com/dist/amx-coder/public/amx-coder-1.0.2.tar.gz"
-  version "1.0.2"
   sha256 "3d9536ee6e30a1cc7753ac2044bdc4b23198baa3f1b87fccbd8e8f4e86f7fed1"
   license "MIT"
 
-  depends_on "openjdk@17"
-  depends_on "gradle"
-
   def install
-    # Build from source using Gradle
-    ENV["JAVA_HOME"] = Formula["openjdk@17"].opt_prefix
-    
-    # Clean any existing build artifacts
-    system "./gradlew", "clean", "--no-daemon"
-    
-    # Build for current platform
-    if Hardware::CPU.arm?
-      system "./gradlew", "linkReleaseExecutableMacosArm64", "--no-daemon"
-      bin.install "build/bin/macosArm64/releaseExecutable/amx-coder.kexe" => "amx-coder"
-    else
-      system "./gradlew", "linkReleaseExecutableMacos", "--no-daemon"
-      bin.install "build/bin/macos/releaseExecutable/amx-coder.kexe" => "amx-coder"
-    end
+    # Install the prebuilt amx-coder binary
+    bin.install "amx-coder.kexe" => "amx-coder"
+    # Make executable on Unix-like systems
+    chmod "+x", bin/"amx-coder"
   end
 
   test do
