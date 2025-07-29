@@ -5,7 +5,7 @@ class AmxCoder < Formula
   desc "Stateless, multi-agent coding workspace for automating coding tasks"
   homepage "https://public.aimatrix.com/dist/amx-coder/public/"
   url "https://public.aimatrix.com/dist/amx-coder/public/amx-coder-1.0.2.tar.gz"
-  sha256 "8f3a9c4dc03a72ccbc58f4de3ea5af707b7f12534043f3301acdd46f7d463f3d"
+  sha256 "3d9536ee6e30a1cc7753ac2044bdc4b23198baa3f1b87fccbd8e8f4e86f7fed1"
   license "MIT"
 
   depends_on "openjdk@17" => :build
